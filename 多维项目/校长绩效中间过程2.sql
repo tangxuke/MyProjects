@@ -1,12 +1,3 @@
-select дЙ╥щ,тб╥щ,хн©нюой╕,SUM(©нй╠) as ©нй╠,SUM(хк╢н) as хк╢н,SUM(йухК) as йухК
-,SUM(╪╗п╖╧╓вй) as пб╪╗п╖╧╓вй
-,(select top 1 й╣╪й╪╗п╖╧╓вй from DuoweiEdu_Salary_New.dbo.╧╓вй╠М where дЙ╥щ=cc.дЙ╥щ and тб╥щ=cc.тб╥щ and ж╟т╠пуцШ=cc.хн©нюой╕) as й╣╪й╪╗п╖╧╓вй
-,SUM(╪╗п╖╧╓вй)-(select top 1 й╣╪й╪╗п╖╧╓вй from DuoweiEdu_Salary_New.dbo.╧╓вй╠М where дЙ╥щ=cc.дЙ╥щ and тб╥щ=cc.тб╥щ and ж╟т╠пуцШ=cc.хн©нюой╕) as ╪╗п╖╡Н╤Н
-from
-(
-select дЙ╥щ,тб╥щ,хн©нюой╕,╟Ю╠П,©нЁлцШЁф,©нй╠,хк╢н,йухК,╪╗п╖╧╓вй,еецШ
-from
-(
 select дЙ╥щ,тб╥щ,хн©нюой╕,╟Ю╠П,©нЁлцШЁф,COUNT(*) as ©нй╠,SUM(хк╢н) as хк╢н,SUM(йухК) as йухК,SUM(╪╗п╖╧╓вй) as ╪╗п╖╧╓вй
 ,ROW_NUMBER() over (partition by дЙ╥щ,тб╥щ,хн©нюой╕ order by sum(╪╗п╖╧╓вй) desc) as еецШ
 from
@@ -25,8 +16,4 @@ group by дЙ╥щ,тб╥щ,хн©нюой╕,╟Ю╪╤юЮпм,╟Ю╠П,©нЁлцШЁф,a.дЙ╪╤,c.╢О╠Й©нй╠╧╓вй,c.╩Ы╠╬©
 ,CONVERT(varchar,a.©╪гзхуфз,112)+' '+a.©╪гзй╠╪Д
 ) aa
 group by дЙ╥щ,тб╥щ,хн©нюой╕,╟Ю╠П,©нЁлцШЁф
-) bb
-where еецШ<=4
-) cc
-group by дЙ╥щ,тб╥щ,хн©нюой╕
-order by хн©нюой╕,дЙ╥щ,тб╥щ
+order by хн©нюой╕,дЙ╥щ,тб╥щ,еецШ

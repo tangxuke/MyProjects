@@ -1,4 +1,24 @@
 --select * from 人事字典
+USE [DuoweiEdu_Salary_New]
+GO
+/****** Object:  UserDefinedFunction [dbo].[季度在职人数]    Script Date: 09/29/2018 10:14:12 ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+ALTER function [dbo].[季度在职人数](@起始日期 datetime,@结束日期 datetime)
+returns int
+as
+begin
+	declare @人数 int
+	select @人数=COUNT(*)
+	from 人事字典
+	where convert(varchar,入职时间,112)<=CONVERT(varchar,@结束日期,112)
+	and (isnull(离职否,0)=0 or CONVERT(varchar,离职日期,112)<=CONVERT(varchar,@起始日期,112))
+	
+	return @人数
+end
+
 GO
 create function dbo.季度离职人数(@起始日期 datetime,@结束日期 datetime)
 returns int

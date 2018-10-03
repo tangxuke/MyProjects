@@ -1,0 +1,405 @@
+
+alter function dbo.人员状态(@年份 int,@月份 int,@校区 varchar(50),@职员代码 varchar(50),@查询码 int)
+returns bit
+as
+begin
+	/**
+	* 根据查询码，查询人员状态
+	* 查询码=1，返回是否月初在职人员
+	* 查询码=2，返回是否新招人员
+	* 查询码=3，返回是否离职人员
+	* 查询码=4，返回是否调出人员
+	* 查询码=5，返回是否调入人员
+	* 查询码=6，返回是否月底在职人员
+	*/
+	declare @状态码 bit,@上月年份 int,@上月月份 int
+	select top 1 @上月年份=年份,@上月月份=月份 from 工资表 where 年份*12+月份<@年份*12+@月份 order by 年份*12+月份 desc
+	
+	
+	set @状态码=(case
+				--查询码=1，返回是否月初在职人员
+				when @查询码=1 then (case when exists(select * from 工资表 where 校区=@校区 and 年份=@上月年份 and 月份=@上月月份 and 职员代码=@职员代码 and isnull(离职否,0)=0) then 1 else 0 end)
+				--查询码=2，返回是否新招人员
+				when @查询码=2 then (case when exists(select * from 工资表 where 校区=@校区 and 年份=@年份 and 月份=@月份 and 职员代码=@职员代码 and year(入职时间)=@年份 and MONTH(入职时间)=@月份) then 1 else 0 end)
+				--查询码=3，返回是否离职人员
+				when @查询码=3 then (case when exists(select * from 工资表 where 校区=@校区 and 年份=@年份 and 月份=@月份 and 职员代码=@职员代码 and isnull(离职否,0)=1 and year(离职日期)=@年份 and MONTH(离职日期)=@月份) then 1 else 0 end)
+				--查询码=4，返回是否调出人员
+				when @查询码=4 then (case when exists(select * from 工资表 where 校区<>@校区 and 年份=@年份 and 月份=@月份 and 职员代码=@职员代码) 
+											and exists(select * from 工资表 where 校区=@校区 and 年份=@上月年份 and 月份=@上月月份 and 职员代码=@职员代码)
+									then 1 else 0 end)
+				--查询码=5，返回是否调入人员
+				when @查询码=5 then (case when exists(select * from 工资表 where 校区=@校区 and 年份=@年份 and 月份=@月份 and 职员代码=@职员代码) 
+											and exists(select * from 工资表 where 校区<>@校区 and 年份=@上月年份 and 月份=@上月月份 and 职员代码=@职员代码)
+									then 1 else 0 end)
+				--查询码=6，返回是否月底在职人员
+				when @查询码=6 then (case when exists(select * from 工资表 where 校区=@校区 and 年份=@年份 and 月份=@月份 and 职员代码=@职员代码 and isnull(离职否,0)=0) then 1 else 0 end)
+				else 0
+				end)
+	
+	
+	return @状态码
+end
+
+GO
+
+alter function dbo.上个年月(@年月 varchar(6))
+returns varchar(6)
+as
+begin
+	declare @上个年月 varchar(6)
+	select top 1 @上个年月=年月
+	from 工资表
+	where 年月<@年月
+	order by 年月 desc
+	
+	return @上个年月
+end
+GO
+
+--初始化人员名单
+if OBJECT_ID('tempdb..#tb1')>0
+	drop table #tb1
+GO
+select 年份,月份,a.校区,a.职员代码,职员姓名,入职时间,离职否,离职日期
+into #tb1
+from
+(
+select 职员代码,校区
+from 工资表
+group by 职员代码,校区
+) a
+inner join
+(select 校区,年份,月份 from 工资表 group by 校区,年份,月份) b
+on a.校区=b.校区
+inner join 人事字典 c on a.职员代码=c.职员代码
+GO
+
+--人员情况原始数据
+if OBJECT_ID('tempdb..#tb2')>0
+	drop table #tb2
+GO
+select 年份,月份,校区,职员代码,职员姓名,入职时间,离职否,离职日期
+,dbo.人员状态(年份,月份,校区,职员代码,1) as 月初在职人员
+,dbo.人员状态(年份,月份,校区,职员代码,2) as 新招人员
+,dbo.人员状态(年份,月份,校区,职员代码,3) as 离职人员
+,dbo.人员状态(年份,月份,校区,职员代码,4) as 本集团内调动人员
+,dbo.人员状态(年份,月份,校区,职员代码,5) as 本集团内调入人员
+,dbo.人员状态(年份,月份,校区,职员代码,6) as 月底在职人员
+into #tb2
+from #tb1
+order by 年份,月份,校区,职员代码
+
+--输出结果
+if OBJECT_ID('tempdb..#tb3')>0
+	drop table #tb3
+GO
+select * 
+into #tb3
+from #tb2 
+where not (月初在职人员=0 and 新招人员=0 and 离职人员=0 and 本集团内调动人员=0 and 本集团内调入人员=0 and 月底在职人员=0)
+
+select * from #tb3
+GO
+--统计离职率（按月）
+if OBJECT_ID('tempdb..#tb4')>0
+	drop table #tb4
+GO
+select 年份,月份,校区
+,SUM(cast(月初在职人员 as tinyint)) as 月初在职人员
+,SUM(cast(新招人员 as tinyint)) as 新招人员
+,SUM(cast(离职人员 as tinyint)) as 离职人员
+,SUM(cast(本集团内调动人员 as tinyint)) as 本集团内调动人员
+,SUM(cast(本集团内调入人员 as tinyint)) as 本集团内调入人员
+,SUM(cast(月底在职人员 as tinyint)) as 月底在职人员
+into #tb4
+from #tb3
+group by 年份,月份,校区
+order by 年份,月份,校区
+
+select * from #tb4
+
+-------------------------------------------------------------------------------------------------------
+if OBJECT_ID('tempdb..#t1')>0
+	drop table #t1
+GO
+if OBJECT_ID('tempdb..#t2')>0
+	drop table #t2
+GO
+
+select 年份,月份,校区,季度,课程名称 into #t1 from 月份考勤表 group by 年份,月份,校区,季度,课程名称
+update #t1 set 课程名称=LEFT(课程名称,4)+'年'+SUBSTRING(课程名称,5,len(课程名称)-4) where 课程名称 like '201%' and SUBSTRING(课程名称,5,1)<>'年'
+
+select 年份,月份,校区,季度1 as 季度
+into #t2
+from 
+(
+select  *,
+(case when 课程名称 like '201_年%' then LEFT(课程名称,7)+'班' else 季度 end) as 季度1 
+from #t1
+where (case when 课程名称 like '201_年%' then LEFT(课程名称,7)+'班' else 季度 end) like '201_年__班'
+) a
+group by 年份,月份,校区,季度1
+order by 校区,季度
+--校区、季度、月份对应表
+select * from #t2
+
+--校区、季度人员变动表
+if OBJECT_ID('tempdb..#tb5')>0
+	drop table #tb5
+GO
+select 校区,季度
+,SUM(新招人员) as 新招人员
+,SUM(离职人员) as 离职人员
+,SUM(本集团内调动人员) as 本集团内调动人员
+,SUM(本集团内调入人员) as 本集团内调入人员
+,MIN(年月) as 起始年月
+,MAX(年月) as 截止年月
+,COUNT(*) as 月份数
+into #tb5
+from
+(
+select a.*,b.季度,LTRIM(rtrim(str(a.年份)))+(case when a.月份<10 then '0' else '' end)+LTRIM(rtrim(str(a.月份))) as 年月
+from #tb4 a
+	inner join #t2 b on a.校区=b.校区 and a.年份=b.年份 and a.月份=b.月份
+) a
+group by 校区,季度
+
+if OBJECT_ID('tempdb..#tb6')>0
+	drop table #tb6
+GO
+select *,
+(select COUNT(*) 
+	from 人事字典 
+	where exists(select * 
+				from 工资表 
+				where 职员代码=人事字典.职员代码 and 校区=a.校区
+				and (年月 between a.起始年月 and a.截止年月) 
+				and isnull(离职否,0)=0
+				)
+		and not exists(select * 
+				from 工资表 
+				where 职员代码=人事字典.职员代码  and 校区=a.校区
+				and (年月 between a.起始年月 and a.截止年月) 
+				and isnull(离职否,0)=1
+				)
+) as 季度末在职人数
+into #tb6
+from #tb5 a
+order by 校区,季度
+
+select * from #tb6
+
+--按季度总收入
+if OBJECT_ID('tempdb..#t3')>0
+	drop table #t3
+GO
+select 年份,月份,校区,季度,课程名称,SUM(isnull(isnull(实际收入,收入),0)) as 收入,SUM(考勤状态) as 人次
+into #t3
+from 月份考勤表
+group by 年份,月份,校区,季度,课程名称
+
+select * from #t3
+update #t1 set 课程名称=LEFT(课程名称,4)+'年'+SUBSTRING(课程名称,5,len(课程名称)-4) where 课程名称 like '201%' and SUBSTRING(课程名称,5,1)<>'年'
+
+--校区季度课程收入统计原始数据
+if OBJECT_ID('tempdb..#tb7')>0
+	drop table #tb7
+GO
+select *
+,(case when 课程名称 like '201_年%' then LEFT(课程名称,7)+'班' else (case when 季度 not like '201_年__班' then '其他' else 季度 end) end) as 季度1 
+into #tb7
+from #t3
+
+select * from #tb7
+
+if OBJECT_ID('tempdb..#tb8')>0
+	drop table #tb8
+GO
+select 校区,季度1 as 季度,SUM(收入) as 收入,SUM(人次) as 人次
+into #tb8
+from #tb7
+group by 校区,季度1
+order by 校区,季度
+
+--校区季度人均创收
+select a.校区,a.季度,a.收入 as 总收入,b.季度末在职人数 as 季度末人数,a.收入/b.季度末在职人数 as 人均创值
+from #tb8 a
+	inner join #tb6 b on a.校区=b.校区 and a.季度=b.季度
+	
+--季度学生数
+if OBJECT_ID('tempdb..#t4')>0
+	drop table #t4
+GO
+select 年份,月份,校区,季度,课程名称,学生编号,学生姓名,SUM(isnull(isnull(实际收入,收入),0)) as 收入,SUM(考勤状态) as 人次
+--,(case when 课程名称 like '201_年%' then LEFT(课程名称,7)+'班' else 季度 end) as 季度1 
+into #t4
+from 月份考勤表
+group by 年份,月份,校区,季度,课程名称,学生编号,学生姓名
+
+update #t4 set 课程名称=LEFT(课程名称,4)+'年'+SUBSTRING(课程名称,5,len(课程名称)-4) where 课程名称 like '201%' and SUBSTRING(课程名称,5,1)<>'年'
+
+if OBJECT_ID('tempdb..#t5')>0
+	drop table #t5
+GO
+select 校区,季度1 as 季度,学生编号,学生姓名,SUM(收入) as 收入,SUM(人次) as 人次
+into #t5
+from
+(
+select * 
+,(case when 课程名称 like '201_年%' then LEFT(课程名称,7)+'班' else 季度 end) as 季度1 
+from #t4
+) a
+group by 校区,季度1,学生编号,学生姓名
+
+
+
+if OBJECT_ID('tempdb..#t6')>0
+	drop table #t6
+GO
+select 校区,季度,COUNT(*) as 学生数,SUM(收入) as 收入,SUM(人次) as 人次
+into #t6
+from #t5
+group by 校区,季度
+
+--t6和t7是同一份数据，用于取上季数据
+if OBJECT_ID('tempdb..#t7')>0
+	drop table #t7
+GO
+select * into #t7 from #t6
+
+select a.*,b.学生数 as 上季学生数
+from #t6 a
+	left join #t7 b on a.校区=b.校区 and dbo.上个季度(a.季度)=b.季度
+order by a.校区,a.季度
+	
+--t5和t8是同一份数据，用于判断续读和新生
+if OBJECT_ID('tempdb..#t8')>0
+	drop table #t8
+GO
+select * into #t8 from #t5
+select * into #t9 from #t5
+
+if OBJECT_ID('tempdb..#t9')>0
+	drop table #t9
+GO
+if OBJECT_ID('tempdb..#t10')>0
+	drop table #t10
+GO
+
+--上季及下季校区
+select a.校区,a.季度,a.学生编号,a.学生姓名,a.人次,a.收入
+,b.校区 as 下季就读校区 
+,c.校区 as 上季就读校区
+into #t10
+from #t5 a
+	left join #t8 b on a.学生编号=b.学生编号 and dbo.上个季度(b.季度)=a.季度
+	left join #t9 c on a.学生编号=c.学生编号 and dbo.上个季度(a.季度)=c.季度
+
+GO
+select* from #t10
+	
+--全息学生明细
+if OBJECT_ID('tempdb..#t11')>0
+	drop table #t11
+GO
+select *
+--续读信息
+,(case when ISNULL(上季就读校区,'')<>'' then 1 else 0 end) as 本季续读
+,(case when ISNULL(上季就读校区,'')<>'' and ISNULL(上季就读校区,'')<>校区 then 1 else 0 end) as 本季他校转入续读
+,(case when ISNULL(上季就读校区,'')<>'' and ISNULL(上季就读校区,'')=校区 then 1 else 0 end) as 本季本校续读
+--新生信息
+,(case when ISNULL(上季就读校区,'')<>校区 then 1 else 0 end) as 本季新生
+,(case when ISNULL(上季就读校区,'')='' then 1 else 0 end) as 本季全新学员
+,(case when ISNULL(上季就读校区,'')<>'' and ISNULL(上季就读校区,'')<>校区 then 1 else 0 end) as 本季他校转入新学员
+into #t11
+from #t10 a
+
+select * from #t11
+
+if OBJECT_ID('tempdb..#t12')>0
+	drop table #t12
+GO
+--续读信息汇总
+select 校区,季度
+,SUM(人次) as 本季人次
+,SUM(收入) as 本季收入
+,COUNT(*) as 本季学生人数
+--续读
+,SUM(本季续读) as 本季续读人数
+,SUM(本季本校续读) as 本季本校续读人数
+,SUM(本季他校转入续读) as 本季他校转入续读人数
+,SUM((case when 本季续读=1 then 人次 else 0 end)) as 本季续读人次
+,SUM((case when 本季本校续读=1 then 人次 else 0 end)) as 本季本校续读人次
+,SUM((case when 本季他校转入续读=1 then 人次 else 0 end)) as 本季他校转入续读人次
+--新生
+,SUM(本季新生) as 本季新生人数
+,SUM(本季全新学员) as 本季全新学员人数
+,SUM(本季他校转入新学员) as 本季他校转入新学员人数
+,SUM((case when 本季新生=1 then 人次 else 0 end)) as 本季新生人次
+,SUM((case when 本季全新学员=1 then 人次 else 0 end)) as 本季全新学员人次
+,SUM((case when 本季他校转入新学员=1 then 人次 else 0 end)) as 本季他校转入新学员人次
+into #t12
+from #t11
+group by 校区,季度
+
+
+--加入上季新生人数和人次
+if OBJECT_ID('tempdb..#t13')>0
+	drop table #t13
+GO
+if OBJECT_ID('tempdb..#t14')>0
+	drop table #t14
+GO
+--拷贝两个个备份
+select * into #t13 from #t12
+select * into #t14 from #t12
+
+select a.*
+
+,b.季度 as 上季季度
+,b.本季人次 as 上季人次
+,b.本季收入 as 上季收入
+,b.本季学生人数 as 上季学生人数
+
+,b.本季续读人数 as 上季续读人数
+,b.本季本校续读人数 as 上季本校续读人数
+,b.本季他校转入续读人数 as 上季他校转入续读人数
+,b.本季续读人次 as 上季续读人次
+,b.本季本校续读人次 as 上季本校续读人次
+,b.本季他校转入续读人次 as 上季他校转入续读人次
+
+,b.本季新生人数 as 上季新生人数
+,b.本季全新学员人数 as 上季新入学人数
+,b.本季他校转入新学员人数 as 上季他校转入新学员人数
+,b.本季新生人次 as 上季新生人次
+,b.本季全新学员人次 as 上季新入学人次
+,b.本季他校转入新学员人次 as 上季他校转入新学员人次
+
+,c.季度 as 上季同比季度
+,c.本季人次 as 上季同比人次
+,c.本季收入 as 上季同比收入
+,c.本季学生人数 as 上季同比学生人数
+
+,c.本季续读人数 as 上季同比续读人数
+,c.本季本校续读人数 as 上季同比本校续读人数
+,c.本季他校转入续读人数 as 上季同比他校转入续读人数
+,c.本季续读人次 as 上季同比续读人次
+,c.本季本校续读人次 as 上季同比本校续读人次
+,c.本季他校转入续读人次 as 上季同比他校转入续读人次
+
+,c.本季新生人数 as 上季同比新生人数
+,c.本季全新学员人数 as 上季同比新入学人数
+,c.本季他校转入新学员人数 as 上季同比他校转入新学员人数
+,c.本季新生人次 as 上季同比新生人次
+,c.本季全新学员人次 as 上季同比新入学人次
+,c.本季他校转入新学员人次 as 上季同比他校转入新学员人次
+from #t12 a
+	left join #t13 b on a.校区=b.校区 and dbo.上个季度(a.季度)=b.季度
+	left join #t13 c on a.校区=c.校区 and dbo.上个同比季度(a.季度)=c.季度
+order by a.校区
+,LEFT(a.季度,4)
+,(case when charindex('春季班',a.季度)>0 then 1
+	when charindex('暑假班',a.季度)>0 then 2
+	when charindex('秋季班',a.季度)>0 then 3
+	when charindex('寒假班',a.季度)>0 then 0
+	else 5 end)
